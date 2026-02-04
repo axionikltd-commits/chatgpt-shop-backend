@@ -1,17 +1,21 @@
 /**
  * Axionik – ChatGPT → Shopping Backend
- * Node.js + Express + Upstash Redis
- * Render-safe (no dotenv import)
+ * Render-safe, single-file runtime
  */
 
 import express from "express";
 import crypto from "crypto";
-import { redis } from "./redis.js";
+import { Redis } from "@upstash/redis";
 
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-// Middleware
+// ✅ Create Redis client INLINE (no imports, no path issues)
+const redis = new Redis({
+  url: process.env.UPSTASH_REDIS_REST_URL,
+  token: process.env.UPSTASH_REDIS_REST_TOKEN,
+});
+
 app.use(express.json());
 
 /**
@@ -22,9 +26,7 @@ app.get("/", (req, res) => {
 });
 
 /**
- * 🟢 CHATGPT → CHECKOUT HANDOFF
- * Example:
- * /chat-checkout?intent=tshirt&color=black&size=M&budget=2500&source=chatgpt
+ * ChatGPT → checkout handoff
  */
 app.get("/chat-checkout", async (req, res) => {
   try {
@@ -33,55 +35,46 @@ app.get("/chat-checkout", async (req, res) => {
     if (source !== "chatgpt") {
       return res.status(400).send("Invalid source");
     }
-
     if (!intent) {
       return res.status(400).send("Missing intent");
     }
 
     const sessionId = crypto.randomUUID();
 
-    const sessionPayload = {
-      intent,
-      color: color || null,
-      size: size || null,
-      budget: budget ? Number(budget) : null,
-      createdAt: Date.now()
-    };
-
     await redis.set(
       `chat:session:${sessionId}`,
-      sessionPayload,
+      {
+        intent,
+        color: color || null,
+        size: size || null,
+        budget: budget ? Number(budget) : null,
+        createdAt: Date.now(),
+      },
       { ex: 1800 }
     );
 
-    // Always redirect — NO HTML
     return res.redirect(`/shop?session=${sessionId}`);
-
-  } catch (error) {
-    console.error("chat-checkout error:", error);
+  } catch (err) {
+    console.error(err);
     return res.status(500).send("Server error");
   }
 });
 
 /**
- * 🟢 SHOP – Load products using session intent
+ * Shop – load products using session intent
  */
 app.get("/shop", async (req, res) => {
   try {
     const { session } = req.query;
-
-    if (!session) {
-      return res.status(400).send("Session missing");
-    }
+    if (!session) return res.status(400).send("Session missing");
 
     const sessionData = await redis.get(`chat:session:${session}`);
-    if (!sessionData) {
+    if (!sessionData)
       return res.status(404).send("Session expired or invalid");
-    }
 
     const products = (await redis.get("products:all")) || [];
 
-    const filteredProducts = products.filter((p) => {
+    const filtered = products.filter((p) => {
       if (sessionData.intent && p.category !== sessionData.intent) return false;
       if (sessionData.color && p.color !== sessionData.color) return false;
       if (sessionData.size && !p.sizes.includes(sessionData.size)) return false;
@@ -91,22 +84,17 @@ app.get("/shop", async (req, res) => {
     });
 
     return res.json({
-      source: "chatgpt",
       session,
       filters: sessionData,
-      count: filteredProducts.length,
-      products: filteredProducts
+      count: filtered.length,
+      products: filtered,
     });
-
-  } catch (error) {
-    console.error("shop error:", error);
+  } catch (err) {
+    console.error(err);
     return res.status(500).send("Server error");
   }
 });
 
-/**
- * Start server
- */
 app.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);
 });
