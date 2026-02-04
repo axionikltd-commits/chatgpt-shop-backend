@@ -1,282 +1,218 @@
-/**
- * AXIONIK – FULL PRODUCTION BACKEND
- * Catalog + Cart + Payments + Orders + Delivery + Refunds + Admin + ChatGPT Tracking
- */
-
 import express from "express";
-import crypto from "crypto";
-import Razorpay from "razorpay";
+import cors from "cors";
 import Stripe from "stripe";
 import { Redis } from "@upstash/redis";
+import { randomUUID } from "crypto";
+
+/* ------------------ INIT ------------------ */
 
 const app = express();
-const PORT = process.env.PORT || 3000;
-
-/* ===================== CLIENTS ===================== */
+app.use(cors());
+app.use(express.json());
 
 const redis = new Redis({
   url: process.env.UPSTASH_REDIS_REST_URL,
   token: process.env.UPSTASH_REDIS_REST_TOKEN,
 });
 
-/* ===================== MIDDLEWARE ===================== */
+const stripe = new Stripe(process.env.STRIPE_SECRET_KEY);
 
-app.use(express.json());
+/* ------------------ HEALTH ------------------ */
 
-/* ===================== HEALTH ===================== */
-
-app.get("/", (_, res) => {
-  res.send("Axionik backend is running 🚀");
+app.get("/", (req, res) => {
+  res.send("Axionik Shop Backend running");
 });
 
-/* ===================== CHATGPT SESSION ===================== */
+/* ------------------ CHAT CHECKOUT ------------------ */
+/* Creates a session from ChatGPT intent */
 
 app.get("/chat-checkout", async (req, res) => {
-  const { intent, color, size, budget, source } = req.query;
-  if (source !== "chatgpt" || !intent)
-    return res.status(400).send("Invalid request");
+  try {
+    const { intent, color, size, budget } = req.query;
 
-  const sessionId = crypto.randomUUID();
+    const sessionId = randomUUID();
 
-  await redis.set(
-    `chat:session:${sessionId}`,
-    {
-      intent,
-      color,
-      size,
-      budget: budget ? Number(budget) : null,
-      createdAt: Date.now(),
-    },
-    { ex: 1800 }
-  );
+    const payload = {
+      session: sessionId,
+      filters: {
+        intent,
+        color,
+        size,
+        budget: Number(budget),
+        createdAt: Date.now(),
+      },
+      count: 0,
+      products: [],
+    };
 
-  res.redirect(`/shop?session=${sessionId}`);
+    await redis.set(`chat:session:${sessionId}`, payload, { ex: 1800 });
+
+    res.redirect(`/shop?session=${sessionId}`);
+  } catch (err) {
+    console.error(err);
+    res.status(500).send("Server error");
+  }
 });
 
-/* ===================== SHOP ===================== */
+/* ------------------ SHOP SEARCH ------------------ */
 
 app.get("/shop", async (req, res) => {
-  const session = await redis.get(`chat:session:${req.query.session}`);
-  if (!session) return res.status(404).send("Session expired");
+  try {
+    const { session } = req.query;
 
-  const ids = (await redis.get("products:index")) || [];
-  const products = await Promise.all(ids.map(id => redis.get(`product:${id}`)));
+    const data = await redis.get(`chat:session:${session}`);
+    if (!data) return res.json({ message: "Session expired" });
 
-  const filtered = products.filter(p => {
-    if (!p) return false;
-    if (!p.category.toLowerCase().includes(session.intent)) return false;
-    if (session.color && p.color !== session.color) return false;
-    if (session.size && !p.sizes.includes(session.size)) return false;
-    if (session.budget && p.price > session.budget) return false;
-    return p.quantity > 0;
-  });
+    const products = [];
 
-  res.json({ count: filtered.length, products: filtered });
+    const keys = await redis.keys("product:*");
+
+    for (const key of keys) {
+      const p = await redis.get(key);
+      if (
+        p.color === data.filters.color &&
+        p.price <= data.filters.budget &&
+        p.sizes.includes(data.filters.size)
+      ) {
+        products.push(p);
+      }
+    }
+
+    data.products = products;
+    data.count = products.length;
+
+    await redis.set(`chat:session:${session}`, data, { ex: 1800 });
+
+    res.json(data);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "Shop failed" });
+  }
 });
 
-/* ===================== CART ===================== */
+/* ------------------ ADD TO CART ------------------ */
 
 app.post("/add-to-cart", async (req, res) => {
-  const { session, productId, qty } = req.body;
-  const product = await redis.get(`product:${productId}`);
-  if (!product || product.quantity < qty)
-    return res.status(400).send("Stock issue");
+  try {
+    const { session, productId, qty } = req.body;
 
-  const key = `cart:session:${session}`;
-  const cart = (await redis.get(key)) || { items: [] };
+    if (!session || !productId) {
+      return res.status(400).json({ error: "Missing fields" });
+    }
 
-  const existing = cart.items.find(i => i.productId === productId);
-  existing ? (existing.qty += qty) : cart.items.push({ productId, qty });
+    const cartKey = `cart:${session}`;
+    const cart = (await redis.get(cartKey)) || [];
 
-  await redis.set(key, cart, { ex: 1800 });
-  res.json({ success: true, cart });
+    cart.push({ productId, qty: qty || 1 });
+
+    await redis.set(cartKey, cart, { ex: 1800 });
+
+    res.json({ success: true });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "Add to cart failed" });
+  }
 });
 
-/* ===================== CHECKOUT ===================== */
+/* ------------------ STRIPE CHECKOUT ------------------ */
 
-app.post("/checkout", async (req, res) => {
-  const { session, gateway } = req.body;
-  const cart = await redis.get(`cart:session:${session}`);
-  if (!cart || !cart.items.length) return res.status(400).send("Cart empty");
+app.post("/checkout/stripe", async (req, res) => {
+  try {
+    const { session } = req.body;
 
-  let amount = 0;
-  const items = [];
-
-  for (const i of cart.items) {
-    const p = await redis.get(`product:${i.productId}`);
-    if (!p || p.quantity < i.qty) return res.status(400).send("Stock changed");
-    amount += p.price * i.qty;
-    items.push({ ...i, price: p.price, name: p.name });
-  }
-
-  const orderId = crypto.randomUUID();
-
-  const baseOrder = {
-    orderId,
-    session,
-    items,
-    amount,
-    status: "pending",
-    deliveryStatus: "processing",
-    createdAt: Date.now(),
-  };
-
-  app.post("/checkout/razorpay", async (req, res) => {
-    try {
-      const razorpay = new Razorpay({
-        key_id: process.env.RAZORPAY_KEY_ID,
-        key_secret: process.env.RAZORPAY_KEY_SECRET
-      });
-
-      // create order...
-    } catch (err) {
-      console.error(err);
-      res.status(500).json({ error: "Razorpay init failed" });
+    const cart = await redis.get(`cart:${session}`);
+    if (!cart || cart.length === 0) {
+      return res.status(400).json({ error: "Cart empty" });
     }
-  });
 
-  if (gateway === "razorpay") {
-    const rp = await razorpay.orders.create({
-      amount: amount * 100,
-      currency: "INR",
-      receipt: orderId,
-    });
-    baseOrder.razorpayOrderId = rp.id;
-    await redis.set(`order:pending:${orderId}`, baseOrder);
-    return res.json({ gateway, orderId, razorpayOrderId: rp.id });
-  }
+    const lineItems = [];
 
-  const stripe = new Stripe(process.env.STRIPE_SECRET_KEY, {
-    apiVersion: "2023-10-16",
-  });
-  if (gateway === "stripe") {
-    const s = await stripe.checkout.sessions.create({
-      mode: "payment",
-      line_items: items.map(i => ({
+    for (const item of cart) {
+      const product = await redis.get(`product:${item.productId}`);
+
+      lineItems.push({
         price_data: {
           currency: "inr",
-          product_data: { name: i.name },
-          unit_amount: i.price * 100,
+          product_data: {
+            name: product.name,
+          },
+          unit_amount: product.price * 100,
         },
-        quantity: i.qty,
-      })),
-      success_url: "https://axionikai.com/success",
-      cancel_url: "https://axionikai.com/cancel",
-      metadata: { orderId },
-    });
-    baseOrder.stripeSessionId = s.id;
-    await redis.set(`order:pending:${orderId}`, baseOrder);
-    return res.json({ gateway, orderId, checkoutUrl: s.url });
-  }
-
-  res.status(400).send("Invalid gateway");
-});
-
-/* ===================== STRIPE WEBHOOK ===================== */
-
-app.post(
-  "/webhook/stripe",
-  express.raw({ type: "application/json" }),
-  async (req, res) => {
-    const event = stripe.webhooks.constructEvent(
-      req.body,
-      req.headers["stripe-signature"],
-      process.env.STRIPE_WEBHOOK_SECRET
-    );
-
-    if (event.type === "checkout.session.completed") {
-      const orderId = event.data.object.metadata.orderId;
-      await finalizeOrder(orderId);
+        quantity: item.qty,
+      });
     }
 
-    res.json({ ok: true });
+    const checkoutSession = await stripe.checkout.sessions.create({
+      mode: "payment",
+      payment_method_types: ["card"],
+      line_items: lineItems,
+      success_url: `${process.env.BASE_URL}/order-success?session=${session}`,
+      cancel_url: `${process.env.BASE_URL}/order-cancel`,
+    });
+
+    /* Create order */
+    const orderId = randomUUID();
+
+    await redis.set(`order:${orderId}`, {
+      orderId,
+      session,
+      status: "paid",
+      deliveryStatus: "processing",
+      createdAt: Date.now(),
+    });
+
+    res.json({ checkoutUrl: checkoutSession.url, orderId });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "Stripe checkout failed" });
   }
-);
-
-/* ===================== FINALIZE ORDER ===================== */
-
-async function finalizeOrder(orderId) {
-  const key = `order:pending:${orderId}`;
-  const order = await redis.get(key);
-  if (!order || order.status === "paid") return;
-
-  for (const i of order.items) {
-    const pKey = `product:${i.productId}`;
-    const p = await redis.get(pKey);
-    p.quantity -= i.qty;
-    await redis.set(pKey, p);
-  }
-
-  order.status = "paid";
-  order.paidAt = Date.now();
-
-  await redis.set(`order:paid:${orderId}`, order);
-  await redis.del(key);
-}
-
-/* ===================== DELIVERY STATUS ===================== */
-
-app.post("/admin/order/:orderId/status", async (req, res) => {
-  const { status } = req.body; // processing | shipped | delivered
-  const key = `order:paid:${req.params.orderId}`;
-  const order = await redis.get(key);
-  if (!order) return res.status(404).send("Order not found");
-
-  order.deliveryStatus = status;
-  order.updatedAt = Date.now();
-  await redis.set(key, order);
-
-  res.json({ success: true, order });
 });
 
-/* ===================== REFUNDS ===================== */
-
-app.post("/admin/order/:orderId/refund", async (req, res) => {
-  const order = await redis.get(`order:paid:${req.params.orderId}`);
-  if (!order) return res.status(404).send("Order not found");
-
-  order.status = "refunded";
-  order.refundedAt = Date.now();
-  await redis.set(`order:refunded:${order.orderId}`, order);
-  res.json({ success: true });
-});
-
-/* ===================== ORDER TRACKING ===================== */
-
-app.get("/order/:orderId", async (req, res) => {
-  const paid = await redis.get(`order:paid:${req.params.orderId}`);
-  if (paid) return res.json(paid);
-
-  const pending = await redis.get(`order:pending:${req.params.orderId}`);
-  if (pending) return res.json(pending);
-
-  res.status(404).send("Order not found");
-});
-
-/* ===================== CHATGPT ORDER QUERY ===================== */
+/* ------------------ ORDER TRACKING (CHATGPT) ------------------ */
 
 app.get("/chat-track-order", async (req, res) => {
-  const { orderId } = req.query;
-  const order = await redis.get(`order:paid:${orderId}`);
-  if (!order) return res.json({ message: "I couldn’t find your order 😕" });
+  try {
+    const { orderId } = req.query;
 
-  res.json({
-    message: `Your order is ${order.deliveryStatus}.`,
-    orderId,
-    deliveryStatus: order.deliveryStatus,
-  });
+    const order = await redis.get(`order:${orderId}`);
+
+    if (!order) {
+      return res.json({
+        message: "I couldn’t find your order.",
+      });
+    }
+
+    res.json({
+      message: `Your order is currently ${order.deliveryStatus}.`,
+    });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "Tracking failed" });
+  }
 });
 
-/* ===================== ADMIN DASHBOARD ===================== */
+/* ------------------ ADMIN: UPDATE DELIVERY STATUS ------------------ */
 
-app.get("/admin/orders", async (_, res) => {
-  const keys = await redis.keys("order:paid:*");
-  const orders = await Promise.all(keys.map(k => redis.get(k)));
-  res.json({ count: orders.length, orders });
+app.post("/admin/update-status", async (req, res) => {
+  try {
+    const { orderId, status } = req.body;
+
+    const order = await redis.get(`order:${orderId}`);
+    if (!order) return res.status(404).json({ error: "Order not found" });
+
+    order.deliveryStatus = status;
+    await redis.set(`order:${orderId}`, order);
+
+    res.json({ success: true });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "Update failed" });
+  }
 });
 
-/* ===================== START ===================== */
+/* ------------------ START SERVER ------------------ */
 
+const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);
 });
