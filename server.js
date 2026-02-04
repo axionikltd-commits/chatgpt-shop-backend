@@ -15,8 +15,6 @@ const redis = new Redis({
   token: process.env.UPSTASH_REDIS_REST_TOKEN,
 });
 
-const stripe = new Stripe(process.env.STRIPE_SECRET_KEY);
-
 /* ------------------ HEALTH ------------------ */
 
 app.get("/", (req, res) => {
@@ -115,7 +113,7 @@ app.post("/add-to-cart", async (req, res) => {
 });
 
 /* ------------------ STRIPE CHECKOUT ------------------ */
-
+const stripe = new Stripe(process.env.STRIPE_SECRET_KEY);
 app.post("/checkout/stripe", async (req, res) => {
   try {
     const { session } = req.body;
