@@ -57,36 +57,94 @@ app.get("/chat-checkout", async (req, res) => {
 app.get("/shop", async (req, res) => {
   try {
     const { session } = req.query;
-
-    const data = await redis.get(`chat:session:${session}`);
-    if (!data) return res.json({ message: "Session expired" });
-
-    const products = [];
-
-    const keys = await redis.keys("product:*");
-
-    for (const key of keys) {
-      const p = await redis.get(key);
-      if (
-        p.color === data.filters.color &&
-        p.price <= data.filters.budget &&
-        p.sizes.includes(data.filters.size)
-      ) {
-        products.push(p);
-      }
+    if (!session) {
+      return res.status(400).json({ error: "Session required" });
     }
 
-    data.products = products;
-    data.count = products.length;
+    const chat = await redis.get(`chat:session:${session}`);
+    if (!chat) {
+      return res.json({
+        session,
+        count: 0,
+        products: []
+      });
+    }
 
-    await redis.set(`chat:session:${session}`, data, { ex: 1800 });
+    const { intent, color, size, budget } = chat.filters;
 
-    res.json(data);
+    // 🔑 Fetch all products
+    const keys = await redis.keys("product:*");
+    const products = await Promise.all(
+      keys.map((k) => redis.get(k))
+    );
+
+    const normalizedIntent = intent?.toLowerCase();
+
+    const filtered = products.filter((p) => {
+      if (!p) return false;
+
+      // Category / intent match
+      if (
+        normalizedIntent &&
+        !p.category?.toLowerCase().includes(normalizedIntent)
+      ) {
+        return false;
+      }
+
+      // Color match
+      if (
+        color &&
+        p.color?.toLowerCase() !== color.toLowerCase()
+      ) {
+        return false;
+      }
+
+      // Size match (ARRAY!)
+      if (
+        size &&
+        !Array.isArray(p.sizes) &&
+        !p.sizes?.includes(size)
+      ) {
+        return false;
+      }
+
+      if (
+        size &&
+        Array.isArray(p.sizes) &&
+        !p.sizes.includes(size)
+      ) {
+        return false;
+      }
+
+      // Budget match
+      if (
+        budget &&
+        Number(p.price) > Number(budget)
+      ) {
+        return false;
+      }
+
+      // Stock check
+      if (Number(p.quantity) <= 0) {
+        return false;
+      }
+
+      return true;
+    });
+
+    res.json({
+      session,
+      filters: chat.filters,
+      count: filtered.length,
+      products: filtered
+    });
+
   } catch (err) {
     console.error(err);
-    res.status(500).json({ error: "Shop failed" });
+    res.status(500).json({ error: "Server error" });
   }
 });
+
 
 /* ------------------ ADD TO CART ------------------ */
 
