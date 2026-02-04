@@ -1,172 +1,149 @@
 import express from "express";
 import cors from "cors";
 import { Redis } from "@upstash/redis";
-import { randomUUID } from "crypto";
-
-/* ------------------ INIT ------------------ */
 
 const app = express();
 app.use(cors());
 app.use(express.json());
 
+// --------------------
+// Redis
+// --------------------
 const redis = new Redis({
   url: process.env.UPSTASH_REDIS_REST_URL,
-  token: process.env.UPSTASH_REDIS_REST_TOKEN,
+  token: process.env.UPSTASH_REDIS_REST_TOKEN
 });
 
-/* ------------------ HEALTH ------------------ */
+// --------------------
+// Helpers
+// --------------------
+const normalize = (v) => String(v || "").toLowerCase();
 
-app.get("/", (req, res) => {
-  res.send("Axionik Shop Backend running");
-});
-
-/* ------------------ CHAT CHECKOUT ------------------ */
-/* Creates a session from ChatGPT intent */
-
-app.get("/chat-checkout", async (req, res) => {
+// --------------------
+// 1. SEARCH PRODUCTS (ChatGPT calls this)
+// --------------------
+app.post("/chat-search", async (req, res) => {
   try {
-    const { intent, color, size, budget } = req.query;
+    const { session, filters } = req.body;
 
-    const sessionId = randomUUID();
+    const color = normalize(filters.color);
+    const size = normalize(filters.size);
+    const budget = Number(filters.budget || 0);
+
+    const keys = await redis.keys("product:*");
+    const results = [];
+
+    for (const key of keys) {
+      const raw = await redis.get(key);
+      if (!raw) continue;
+
+      const product = JSON.parse(raw);
+
+      const productColor = normalize(product.color);
+      const productSizes = product.sizes.map(normalize);
+      const productPrice = Number(product.price);
+
+      if (
+        productColor === color &&
+        productSizes.includes(size) &&
+        productPrice <= budget
+      ) {
+        results.push(product);
+      }
+    }
 
     const payload = {
-      session: sessionId,
-      filters: {
-        intent,
-        color,
-        size,
-        budget: Number(budget),
-        createdAt: Date.now(),
-      },
-      count: 0,
-      products: [],
+      session,
+      filters,
+      count: results.length,
+      products: results
     };
 
-    await redis.set(`chat:session:${sessionId}`, payload, { ex: 1800 });
+    await redis.set(`chat:session:${session}`, JSON.stringify(payload), {
+      ex: 1800
+    });
 
-    res.redirect(`/shop?session=${sessionId}`);
+    res.json(payload);
   } catch (err) {
     console.error(err);
-    res.status(500).send("Server error");
+    res.status(500).json({ error: "Search failed" });
   }
 });
 
-/* ------------------ SHOP SEARCH ------------------ */
-app.get("/shop", async (req, res) => {
-  try {
-    const { session } = req.query;
-    if (!session) {
-      return res.status(400).json({ error: "Session required" });
-    }
-
-    const chatRaw = await redis.get(`chat:session:${session}`);
-    if (!chatRaw) {
-      return res.json({ session, count: 0, products: [] });
-    }
-
-    const chat = typeof chatRaw === "string"
-      ? JSON.parse(chatRaw)
-      : chatRaw;
-
-    const { intent, color, size, budget } = chat.filters;
-
-    const productKeys = await redis.keys("product:*");
-
-    const products = (
-      await Promise.all(productKeys.map(k => redis.get(k)))
-    )
-      .map(p => (typeof p === "string" ? JSON.parse(p) : p))
-      .filter(Boolean);
-
-    const normalizedIntent = intent?.toLowerCase().replace(/[^a-z]/g, "");
-    const normalizedColor = color?.toLowerCase().trim();
-    const normalizedSize = size?.toUpperCase();
-
-    const filtered = products.filter(p => {
-      // category / intent
-      if (
-        normalizedIntent &&
-        !p.category?.toLowerCase().replace(/[^a-z]/g, "")
-          .includes(normalizedIntent)
-      ) return false;
-
-      // color
-      if (
-        normalizedColor &&
-        p.color?.toLowerCase().trim() !== normalizedColor
-      ) return false;
-
-      // size (ARRAY ONLY)
-      if (
-        normalizedSize &&
-        (!Array.isArray(p.sizes) || !p.sizes.includes(normalizedSize))
-      ) return false;
-
-      // budget
-      if (
-        budget &&
-        Number(p.price) > Number(budget)
-      ) return false;
-
-      // stock
-      if (Number(p.quantity) <= 0) return false;
-
-      return true;
-    });
-
-    res.json({
-      session,
-      filters: chat.filters,
-      count: filtered.length,
-      products: filtered
-    });
-
-  } catch (err) {
-    console.error("SHOP ERROR:", err);
-    res.status(500).json({ error: "Server error" });
-  }
-});
-
-/* ------------------ ADD TO CART ------------------ */
-
+// --------------------
+// 2. ADD TO CART
+// --------------------
 app.post("/add-to-cart", async (req, res) => {
   try {
     const { session, productId, qty } = req.body;
+    const key = `cart:${session}`;
 
-    if (!session || !productId) {
-      return res.status(400).json({ error: "Missing fields" });
-    }
+    const raw = await redis.get(key);
+    const cart = raw ? JSON.parse(raw) : [];
 
-    const cartKey = `cart:${session}`;
-    const cart = (await redis.get(cartKey)) || [];
+    cart.push({ productId, qty });
 
-    cart.push({ productId, qty: qty || 1 });
+    await redis.set(key, JSON.stringify(cart), { ex: 1800 });
 
-    await redis.set(cartKey, cart, { ex: 1800 });
-
-    res.json({ success: true });
+    res.json({ success: true, cart });
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: "Add to cart failed" });
   }
 });
 
-/* ------------------ ORDER TRACKING (CHATGPT) ------------------ */
+// --------------------
+// 3. CHECKOUT (mock – payment later)
+// --------------------
+app.post("/checkout", async (req, res) => {
+  try {
+    const { session } = req.body;
 
+    const cartRaw = await redis.get(`cart:${session}`);
+    if (!cartRaw) {
+      return res.status(400).json({ error: "Cart empty" });
+    }
+
+    const orderId = `ORD-${Date.now()}`;
+
+    const order = {
+      orderId,
+      session,
+      deliveryStatus: "processing",
+      createdAt: Date.now()
+    };
+
+    await redis.set(`order:${orderId}`, JSON.stringify(order), {
+      ex: 86400
+    });
+
+    res.json({
+      success: true,
+      orderId,
+      message: "Order placed successfully"
+    });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "Checkout failed" });
+  }
+});
+
+// --------------------
+// 4. ORDER TRACKING (ChatGPT: “Where is my order?”)
+// --------------------
 app.get("/chat-track-order", async (req, res) => {
   try {
     const { orderId } = req.query;
 
-    const order = await redis.get(`order:${orderId}`);
-
-    if (!order) {
-      return res.json({
-        message: "I couldn’t find your order.",
-      });
+    const raw = await redis.get(`order:${orderId}`);
+    if (!raw) {
+      return res.json({ message: "I couldn't find your order." });
     }
 
+    const order = JSON.parse(raw);
+
     res.json({
-      message: `Your order is currently ${order.deliveryStatus}.`,
+      message: `Your order is currently ${order.deliveryStatus}.`
     });
   } catch (err) {
     console.error(err);
@@ -174,28 +151,8 @@ app.get("/chat-track-order", async (req, res) => {
   }
 });
 
-/* ------------------ ADMIN: UPDATE DELIVERY STATUS ------------------ */
-
-app.post("/admin/update-status", async (req, res) => {
-  try {
-    const { orderId, status } = req.body;
-
-    const order = await redis.get(`order:${orderId}`);
-    if (!order) return res.status(404).json({ error: "Order not found" });
-
-    order.deliveryStatus = status;
-    await redis.set(`order:${orderId}`, order);
-
-    res.json({ success: true });
-  } catch (err) {
-    console.error(err);
-    res.status(500).json({ error: "Update failed" });
-  }
-});
-
-/* ------------------ START SERVER ------------------ */
-
+// --------------------
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => {
-  console.log(`Server running on port ${PORT}`);
-});
+app.listen(PORT, () =>
+  console.log(`Server running on port ${PORT}`)
+);
