@@ -1,9 +1,9 @@
 /**
  * Axionik – ChatGPT → Shopping Backend
  * Node.js + Express + Upstash Redis
+ * Render-safe (no dotenv import)
  */
 
-import "dotenv/config";           // 🔴 REQUIRED to load .env
 import express from "express";
 import crypto from "crypto";
 import { redis } from "./redis.js";
@@ -30,7 +30,6 @@ app.get("/chat-checkout", async (req, res) => {
   try {
     const { intent, color, size, budget, source } = req.query;
 
-    // Validate source
     if (source !== "chatgpt") {
       return res.status(400).send("Invalid source");
     }
@@ -39,7 +38,6 @@ app.get("/chat-checkout", async (req, res) => {
       return res.status(400).send("Missing intent");
     }
 
-    // Create session
     const sessionId = crypto.randomUUID();
 
     const sessionPayload = {
@@ -50,14 +48,13 @@ app.get("/chat-checkout", async (req, res) => {
       createdAt: Date.now()
     };
 
-    // Store session in Redis (30 min TTL)
     await redis.set(
       `chat:session:${sessionId}`,
       sessionPayload,
       { ex: 1800 }
     );
 
-    // 🔴 IMPORTANT: Always redirect (NO HTML HERE)
+    // Always redirect — NO HTML
     return res.redirect(`/shop?session=${sessionId}`);
 
   } catch (error) {
@@ -68,8 +65,6 @@ app.get("/chat-checkout", async (req, res) => {
 
 /**
  * 🟢 SHOP – Load products using session intent
- * Example:
- * /shop?session=UUID
  */
 app.get("/shop", async (req, res) => {
   try {
@@ -79,16 +74,13 @@ app.get("/shop", async (req, res) => {
       return res.status(400).send("Session missing");
     }
 
-    // Load session from Redis
     const sessionData = await redis.get(`chat:session:${session}`);
     if (!sessionData) {
       return res.status(404).send("Session expired or invalid");
     }
 
-    // Load products
     const products = (await redis.get("products:all")) || [];
 
-    // Filter products
     const filteredProducts = products.filter((p) => {
       if (sessionData.intent && p.category !== sessionData.intent) return false;
       if (sessionData.color && p.color !== sessionData.color) return false;
