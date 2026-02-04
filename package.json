@@ -12,6 +12,8 @@
   "license": "ISC",
   "type": "module",
   "dependencies": {
+    "@upstash/redis": "^1.36.2",
+    "dotenv": "^17.2.3",
     "express": "^5.2.1"
   }
 }
