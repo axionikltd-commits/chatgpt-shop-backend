@@ -19,15 +19,6 @@ const redis = new Redis({
   token: process.env.UPSTASH_REDIS_REST_TOKEN,
 });
 
-const razorpay = new Razorpay({
-  key_id: process.env.RAZORPAY_KEY_ID,
-  key_secret: process.env.RAZORPAY_KEY_SECRET,
-});
-
-const stripe = new Stripe(process.env.STRIPE_SECRET_KEY, {
-  apiVersion: "2023-10-16",
-});
-
 /* ===================== MIDDLEWARE ===================== */
 
 app.use(express.json());
@@ -130,6 +121,20 @@ app.post("/checkout", async (req, res) => {
     createdAt: Date.now(),
   };
 
+  app.post("/checkout/razorpay", async (req, res) => {
+    try {
+      const razorpay = new Razorpay({
+        key_id: process.env.RAZORPAY_KEY_ID,
+        key_secret: process.env.RAZORPAY_KEY_SECRET
+      });
+
+      // create order...
+    } catch (err) {
+      console.error(err);
+      res.status(500).json({ error: "Razorpay init failed" });
+    }
+  });
+
   if (gateway === "razorpay") {
     const rp = await razorpay.orders.create({
       amount: amount * 100,
@@ -141,6 +146,9 @@ app.post("/checkout", async (req, res) => {
     return res.json({ gateway, orderId, razorpayOrderId: rp.id });
   }
 
+  const stripe = new Stripe(process.env.STRIPE_SECRET_KEY, {
+    apiVersion: "2023-10-16",
+  });
   if (gateway === "stripe") {
     const s = await stripe.checkout.sessions.create({
       mode: "payment",
