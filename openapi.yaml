@@ -1,0 +1,103 @@
+openapi: 3.1.0
+info:
+  title: Axionik AI Shopping API
+  description: ChatGPT-powered shopping, checkout, and order tracking
+  version: "1.0.0"
+
+servers:
+  - url: https://axionikai.com
+
+paths:
+  /chat-checkout:
+    get:
+      operationId: startShopping
+      summary: Start shopping session from ChatGPT
+      parameters:
+        - name: intent
+          in: query
+          required: true
+          schema: { type: string }
+        - name: color
+          in: query
+          required: false
+          schema: { type: string }
+        - name: size
+          in: query
+          required: false
+          schema: { type: string }
+        - name: budget
+          in: query
+          required: false
+          schema: { type: number }
+        - name: source
+          in: query
+          required: true
+          schema: { type: string }
+      responses:
+        "302":
+          description: Redirects to shop session
+
+  /add-to-cart:
+    post:
+      operationId: addToCart
+      summary: Add product to cart
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [session, productId, qty]
+              properties:
+                session: { type: string }
+                productId: { type: string }
+                qty: { type: number }
+      responses:
+        "200":
+          description: Cart updated
+
+  /cart:
+    get:
+      operationId: viewCart
+      summary: View cart for session
+      parameters:
+        - name: session
+          in: query
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: Cart contents
+
+  /checkout:
+    post:
+      operationId: checkout
+      summary: Create checkout
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [session, gateway]
+              properties:
+                session: { type: string }
+                gateway:
+                  type: string
+                  enum: [stripe, razorpay]
+      responses:
+        "200":
+          description: Checkout created
+
+  /chat-track-order:
+    get:
+      operationId: trackOrder
+      summary: Track order conversationally
+      parameters:
+        - name: orderId
+          in: query
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: Order status
