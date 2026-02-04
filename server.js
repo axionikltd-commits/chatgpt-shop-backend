@@ -1,6 +1,5 @@
 import express from "express";
 import cors from "cors";
-import Stripe from "stripe";
 import { Redis } from "@upstash/redis";
 import { randomUUID } from "crypto";
 
@@ -167,60 +166,6 @@ app.post("/add-to-cart", async (req, res) => {
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: "Add to cart failed" });
-  }
-});
-
-/* ------------------ STRIPE CHECKOUT ------------------ */
-const stripe = new Stripe(process.env.STRIPE_SECRET_KEY);
-app.post("/checkout/stripe", async (req, res) => {
-  try {
-    const { session } = req.body;
-
-    const cart = await redis.get(`cart:${session}`);
-    if (!cart || cart.length === 0) {
-      return res.status(400).json({ error: "Cart empty" });
-    }
-
-    const lineItems = [];
-
-    for (const item of cart) {
-      const product = await redis.get(`product:${item.productId}`);
-
-      lineItems.push({
-        price_data: {
-          currency: "inr",
-          product_data: {
-            name: product.name,
-          },
-          unit_amount: product.price * 100,
-        },
-        quantity: item.qty,
-      });
-    }
-
-    const checkoutSession = await stripe.checkout.sessions.create({
-      mode: "payment",
-      payment_method_types: ["card"],
-      line_items: lineItems,
-      success_url: `${process.env.BASE_URL}/order-success?session=${session}`,
-      cancel_url: `${process.env.BASE_URL}/order-cancel`,
-    });
-
-    /* Create order */
-    const orderId = randomUUID();
-
-    await redis.set(`order:${orderId}`, {
-      orderId,
-      session,
-      status: "paid",
-      deliveryStatus: "processing",
-      createdAt: Date.now(),
-    });
-
-    res.json({ checkoutUrl: checkoutSession.url, orderId });
-  } catch (err) {
-    console.error(err);
-    res.status(500).json({ error: "Stripe checkout failed" });
   }
 });
 
