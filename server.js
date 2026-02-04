@@ -52,7 +52,6 @@ app.get("/chat-checkout", async (req, res) => {
 });
 
 /* ------------------ SHOP SEARCH ------------------ */
-
 app.get("/shop", async (req, res) => {
   try {
     const { session } = req.query;
@@ -60,73 +59,57 @@ app.get("/shop", async (req, res) => {
       return res.status(400).json({ error: "Session required" });
     }
 
-    const chat = await redis.get(`chat:session:${session}`);
-    if (!chat) {
-      return res.json({
-        session,
-        count: 0,
-        products: []
-      });
+    const chatRaw = await redis.get(`chat:session:${session}`);
+    if (!chatRaw) {
+      return res.json({ session, count: 0, products: [] });
     }
+
+    const chat = typeof chatRaw === "string"
+      ? JSON.parse(chatRaw)
+      : chatRaw;
 
     const { intent, color, size, budget } = chat.filters;
 
-    // 🔑 Fetch all products
-    const keys = await redis.keys("product:*");
-    const products = await Promise.all(
-      keys.map((k) => redis.get(k))
-    );
+    const productKeys = await redis.keys("product:*");
 
-    const normalizedIntent = intent?.toLowerCase();
+    const products = (
+      await Promise.all(productKeys.map(k => redis.get(k)))
+    )
+      .map(p => (typeof p === "string" ? JSON.parse(p) : p))
+      .filter(Boolean);
 
-    const filtered = products.filter((p) => {
-      if (!p) return false;
+    const normalizedIntent = intent?.toLowerCase().replace(/[^a-z]/g, "");
+    const normalizedColor = color?.toLowerCase().trim();
+    const normalizedSize = size?.toUpperCase();
 
-      // Category / intent match
+    const filtered = products.filter(p => {
+      // category / intent
       if (
         normalizedIntent &&
-        !p.category?.toLowerCase().includes(normalizedIntent)
-      ) {
-        return false;
-      }
+        !p.category?.toLowerCase().replace(/[^a-z]/g, "")
+          .includes(normalizedIntent)
+      ) return false;
 
-      // Color match
+      // color
       if (
-        color &&
-        p.color?.toLowerCase() !== color.toLowerCase()
-      ) {
-        return false;
-      }
+        normalizedColor &&
+        p.color?.toLowerCase().trim() !== normalizedColor
+      ) return false;
 
-      // Size match (ARRAY!)
+      // size (ARRAY ONLY)
       if (
-        size &&
-        !Array.isArray(p.sizes) &&
-        !p.sizes?.includes(size)
-      ) {
-        return false;
-      }
+        normalizedSize &&
+        (!Array.isArray(p.sizes) || !p.sizes.includes(normalizedSize))
+      ) return false;
 
-      if (
-        size &&
-        Array.isArray(p.sizes) &&
-        !p.sizes.includes(size)
-      ) {
-        return false;
-      }
-
-      // Budget match
+      // budget
       if (
         budget &&
         Number(p.price) > Number(budget)
-      ) {
-        return false;
-      }
+      ) return false;
 
-      // Stock check
-      if (Number(p.quantity) <= 0) {
-        return false;
-      }
+      // stock
+      if (Number(p.quantity) <= 0) return false;
 
       return true;
     });
@@ -139,11 +122,10 @@ app.get("/shop", async (req, res) => {
     });
 
   } catch (err) {
-    console.error(err);
+    console.error("SHOP ERROR:", err);
     res.status(500).json({ error: "Server error" });
   }
 });
-
 
 /* ------------------ ADD TO CART ------------------ */
 
