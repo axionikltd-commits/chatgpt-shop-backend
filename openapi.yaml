@@ -1,103 +1,266 @@
 openapi: 3.1.0
+
 info:
-  title: Axionik AI Shopping API
-  description: ChatGPT-powered shopping, checkout, and order tracking
+  title: Axionik AI Conversational Shopping API
+  description: |
+    Backend API for Axionik AI used by ChatGPT Actions.
+    Supports conversational shopping including:
+    - starting a shopping session
+    - fetching products
+    - adding items to cart
+    - checkout
+    - order tracking
+
+    IMPORTANT FLOW (ChatGPT must follow):
+    1. startShoppingSession
+    2. getProducts
+    3. addToCart
+    4. checkout
+    5. trackOrder
   version: "1.0.0"
 
 servers:
-  - url: https://axionikai.com
+  - url: https://www.axionikai.com
+    description: Production server
 
 paths:
+
   /chat-checkout:
     get:
-      operationId: startShopping
-      summary: Start shopping session from ChatGPT
+      operationId: startShoppingSession
+      summary: Start a new shopping session from chat
+      description: |
+        Initializes a shopping session based on user intent and filters.
+        MUST be called before fetching products.
       parameters:
         - name: intent
           in: query
           required: true
-          schema: { type: string }
+          description: High-level product category (example: tshirt)
+          schema:
+            type: string
+          example: tshirt
+
         - name: color
           in: query
           required: false
-          schema: { type: string }
+          schema:
+            type: string
+          example: black
+
         - name: size
           in: query
           required: false
-          schema: { type: string }
+          schema:
+            type: string
+          example: M
+
         - name: budget
           in: query
           required: false
-          schema: { type: number }
-        - name: source
-          in: query
-          required: true
-          schema: { type: string }
-      responses:
-        "302":
-          description: Redirects to shop session
+          schema:
+            type: number
+          example: 5000
 
-  /add-to-cart:
-    post:
-      operationId: addToCart
-      summary: Add product to cart
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              type: object
-              required: [session, productId, qty]
-              properties:
-                session: { type: string }
-                productId: { type: string }
-                qty: { type: number }
       responses:
         "200":
-          description: Cart updated
+          description: Shopping session successfully created
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  session:
+                    type: string
+                    description: Unique shopping session ID
+                  filters:
+                    type: object
+                    properties:
+                      intent:
+                        type: string
+                      color:
+                        type: string
+                      size:
+                        type: string
+                      budget:
+                        type: number
+                  message:
+                    type: string
+              example:
+                session: "bd834a97-cab5-42b3-8a66-7aa8071a5aab"
+                filters:
+                  intent: tshirt
+                  color: black
+                  size: M
+                  budget: 5000
+                message: "Shopping session started"
 
-  /cart:
+  /shop:
     get:
-      operationId: viewCart
-      summary: View cart for session
+      operationId: getProducts
+      summary: Fetch products for an active shopping session
+      description: |
+        Retrieves products matching the filters of a shopping session.
+        MUST be called after startShoppingSession.
       parameters:
         - name: session
           in: query
           required: true
-          schema: { type: string }
+          schema:
+            type: string
+          description: Shopping session ID
+
       responses:
         "200":
-          description: Cart contents
+          description: Products fetched successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  session:
+                    type: string
+                  count:
+                    type: integer
+                  products:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/Product"
+                  message:
+                    type: string
+              example:
+                session: "bd834a97-cab5-42b3-8a66-7aa8071a5aab"
+                count: 1
+                products:
+                  - id: P5001
+                    name: Black Slim Fit T-Shirt
+                    brand: Globus
+                    category: tshirts
+                    color: black
+                    price: 1299
+                    quantity: 50
+                    sizes: ["S", "M", "L", "XL"]
+                    images:
+                      - https://images.unsplash.com/photo-1521572163474-6864f9cf17ab
+                message: "Products matched successfully"
 
-  /checkout:
+  /add-to-cart:
     post:
-      operationId: checkout
-      summary: Create checkout
+      operationId: addToCart
+      summary: Add a product to cart
+      description: Adds a product to the user's cart for a given session.
       requestBody:
         required: true
         content:
           application/json:
             schema:
               type: object
-              required: [session, gateway]
+              required:
+                - session
+                - productId
+                - qty
               properties:
-                session: { type: string }
-                gateway:
+                session:
                   type: string
-                  enum: [stripe, razorpay]
+                productId:
+                  type: string
+                qty:
+                  type: integer
+                  minimum: 1
+            example:
+              session: "bd834a97-cab5-42b3-8a66-7aa8071a5aab"
+              productId: "P5001"
+              qty: 1
       responses:
         "200":
-          description: Checkout created
+          description: Product added to cart
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  message:
+                    type: string
+
+  /checkout/razorpay:
+    post:
+      operationId: createRazorpayCheckout
+      summary: Create Razorpay checkout session
+      description: Initiates payment via Razorpay.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - session
+              properties:
+                session:
+                  type: string
+            example:
+              session: "bd834a97-cab5-42b3-8a66-7aa8071a5aab"
+      responses:
+        "200":
+          description: Razorpay checkout created
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  url:
+                    type: string
+                  orderId:
+                    type: string
 
   /chat-track-order:
     get:
       operationId: trackOrder
-      summary: Track order conversationally
+      summary: Track order status conversationally
+      description: Returns delivery status of an order.
       parameters:
         - name: orderId
           in: query
           required: true
-          schema: { type: string }
+          schema:
+            type: string
       responses:
         "200":
-          description: Order status
+          description: Order status returned
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
+
+components:
+  schemas:
+    Product:
+      type: object
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        brand:
+          type: string
+        category:
+          type: string
+        color:
+          type: string
+        price:
+          type: number
+        quantity:
+          type: integer
+        sizes:
+          type: array
+          items:
+            type: string
+        images:
+          type: array
+          items:
+            type: string
