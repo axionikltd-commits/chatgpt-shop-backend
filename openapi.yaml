@@ -1,22 +1,8 @@
-openapi: 3.1.0
+openapi: 3.0.3
 
 info:
-  title: Axionik AI Conversational Shopping API
-  description: |
-    Backend API for Axionik AI used by ChatGPT Actions.
-    Supports conversational shopping including:
-    - starting a shopping session
-    - fetching products
-    - adding items to cart
-    - checkout
-    - order tracking
-
-    IMPORTANT FLOW (ChatGPT must follow):
-    1. startShoppingSession
-    2. getProducts
-    3. addToCart
-    4. checkout
-    5. trackOrder
+  title: Axionik AI Shopping API
+  description: Conversational shopping backend for Axionik AI used by ChatGPT Actions.
   version: "1.0.0"
 
 servers:
@@ -24,184 +10,86 @@ servers:
     description: Production server
 
 paths:
-
   /chat-checkout:
     get:
       operationId: startShoppingSession
-      summary: Start a new shopping session from chat
-      description: |
-        Initializes a shopping session based on user intent and filters.
-        MUST be called before fetching products.
+      summary: Start a shopping session from chat
       parameters:
         - name: intent
           in: query
           required: true
-          description: High-level product category (example: tshirt)
           schema:
             type: string
-          example: tshirt
-
         - name: color
           in: query
           required: false
           schema:
             type: string
-          example: black
-
         - name: size
           in: query
           required: false
           schema:
             type: string
-          example: M
-
         - name: budget
           in: query
           required: false
           schema:
             type: number
-          example: 5000
-
       responses:
         "200":
-          description: Shopping session successfully created
+          description: Shopping session created
           content:
             application/json:
               schema:
-                type: object
-                properties:
-                  session:
-                    type: string
-                    description: Unique shopping session ID
-                  filters:
-                    type: object
-                    properties:
-                      intent:
-                        type: string
-                      color:
-                        type: string
-                      size:
-                        type: string
-                      budget:
-                        type: number
-                  message:
-                    type: string
-              example:
-                session: "bd834a97-cab5-42b3-8a66-7aa8071a5aab"
-                filters:
-                  intent: tshirt
-                  color: black
-                  size: M
-                  budget: 5000
-                message: "Shopping session started"
+                $ref: "#/components/schemas/ChatSession"
 
   /shop:
     get:
       operationId: getProducts
-      summary: Fetch products for an active shopping session
-      description: |
-        Retrieves products matching the filters of a shopping session.
-        MUST be called after startShoppingSession.
+      summary: Fetch products for a chat shopping session
       parameters:
         - name: session
           in: query
           required: true
           schema:
             type: string
-          description: Shopping session ID
-
       responses:
         "200":
-          description: Products fetched successfully
+          description: Products matching filters
           content:
             application/json:
               schema:
-                type: object
-                properties:
-                  session:
-                    type: string
-                  count:
-                    type: integer
-                  products:
-                    type: array
-                    items:
-                      $ref: "#/components/schemas/Product"
-                  message:
-                    type: string
-              example:
-                session: "bd834a97-cab5-42b3-8a66-7aa8071a5aab"
-                count: 1
-                products:
-                  - id: P5001
-                    name: Black Slim Fit T-Shirt
-                    brand: Globus
-                    category: tshirts
-                    color: black
-                    price: 1299
-                    quantity: 50
-                    sizes: ["S", "M", "L", "XL"]
-                    images:
-                      - https://images.unsplash.com/photo-1521572163474-6864f9cf17ab
-                message: "Products matched successfully"
+                $ref: "#/components/schemas/ProductResponse"
 
   /add-to-cart:
     post:
       operationId: addToCart
       summary: Add a product to cart
-      description: Adds a product to the user's cart for a given session.
       requestBody:
         required: true
         content:
           application/json:
             schema:
-              type: object
-              required:
-                - session
-                - productId
-                - qty
-              properties:
-                session:
-                  type: string
-                productId:
-                  type: string
-                qty:
-                  type: integer
-                  minimum: 1
-            example:
-              session: "bd834a97-cab5-42b3-8a66-7aa8071a5aab"
-              productId: "P5001"
-              qty: 1
+              $ref: "#/components/schemas/AddToCartRequest"
       responses:
         "200":
           description: Product added to cart
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  success:
-                    type: boolean
-                  message:
-                    type: string
 
   /checkout/razorpay:
     post:
       operationId: createRazorpayCheckout
       summary: Create Razorpay checkout session
-      description: Initiates payment via Razorpay.
       requestBody:
         required: true
         content:
           application/json:
             schema:
               type: object
-              required:
-                - session
               properties:
                 session:
                   type: string
-            example:
-              session: "bd834a97-cab5-42b3-8a66-7aa8071a5aab"
+              required:
+                - session
       responses:
         "200":
           description: Razorpay checkout created
@@ -212,14 +100,11 @@ paths:
                 properties:
                   url:
                     type: string
-                  orderId:
-                    type: string
 
   /chat-track-order:
     get:
       operationId: trackOrder
-      summary: Track order status conversationally
-      description: Returns delivery status of an order.
+      summary: Track order conversationally
       parameters:
         - name: orderId
           in: query
@@ -228,7 +113,7 @@ paths:
             type: string
       responses:
         "200":
-          description: Order status returned
+          description: Order status
           content:
             application/json:
               schema:
@@ -239,6 +124,56 @@ paths:
 
 components:
   schemas:
+    ChatSession:
+      type: object
+      properties:
+        session:
+          type: string
+        filters:
+          type: object
+          properties:
+            intent:
+              type: string
+            color:
+              type: string
+            size:
+              type: string
+            budget:
+              type: number
+        count:
+          type: integer
+        products:
+          type: array
+          items:
+            $ref: "#/components/schemas/Product"
+
+    ProductResponse:
+      type: object
+      properties:
+        session:
+          type: string
+        count:
+          type: integer
+        products:
+          type: array
+          items:
+            $ref: "#/components/schemas/Product"
+
+    AddToCartRequest:
+      type: object
+      required:
+        - session
+        - productId
+        - qty
+      properties:
+        session:
+          type: string
+        productId:
+          type: string
+        qty:
+          type: integer
+          minimum: 1
+
     Product:
       type: object
       properties:
