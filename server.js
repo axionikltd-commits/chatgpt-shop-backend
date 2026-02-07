@@ -7,7 +7,7 @@ import cors from "cors";
 import dotenv from "dotenv";
 import path from "path";
 import { fileURLToPath } from "url";
-import { createClient } from "@upstash/redis";
+import { Redis } from "@upstash/redis";
 import { randomUUID } from "crypto";
 
 dotenv.config();
@@ -26,7 +26,7 @@ const __dirname = path.dirname(__filename);
 // Redis setup (Upstash)
 // --------------------------------------------------
 console.log("🔌 Connecting to Redis...");
-const redis = createClient({
+const redis = Redis({
   url: process.env.UPSTASH_REDIS_REST_URL,
   token: process.env.UPSTASH_REDIS_REST_TOKEN
 });
