@@ -3,6 +3,8 @@ import path from "path";
 import { fileURLToPath } from "url";
 import { Redis } from "@upstash/redis";
 import crypto from "crypto";
+import { sendOrderEmail } from "./utils/email.js";
+import { orderCreatedEmail } from "./utils/templates.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -191,6 +193,13 @@ app.post("/checkout/razorpay", async (req, res) => {
     orderId,
     email: sessionData.email,
   });
+});
+
+// AFTER order is saved
+await sendOrderEmail({
+  to: sessionData.email,
+  subject: "Your Axionik Order is Confirmed 🎉",
+  html: orderCreatedEmail(order)
 });
 
 /* ============================
