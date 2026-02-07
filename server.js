@@ -41,13 +41,13 @@ app.get("/openapi.yaml", (req, res) => {
 /* ============================
    CHAT CHECKOUT (SESSION + USER)
 ============================ */
-app.get("/chat-checkout", async (req, res) => {
-  console.log("🚀 /chat-checkout");
-  console.log("➡️ Body:", req.query);
+app.all("/chat-checkout", async (req, res) => {
+  console.log("🔥 /chat-checkout HIT", req.method, req.query);
 
   try {
     const { intent, color, size, budget, email } = req.query;
 
+    // 1️⃣ Email gate — NO Redis usage before this
     if (!email) {
       return res.json({
         status: "EMAIL_REQUIRED",
@@ -64,37 +64,44 @@ app.get("/chat-checkout", async (req, res) => {
       userId,
       email: normalizedEmail,
       filters: {
-        intent: intent?.toLowerCase(),
-        color: color?.toLowerCase(),
-        size,
+        intent: intent?.toLowerCase() || null,
+        color: color?.toLowerCase() || null,
+        size: size || null,
         budget: budget ? Number(budget) : null,
-        createdAt: Date.now(),
+        createdAt: Date.now()
       },
       count: 0,
-      products: [],
+      products: []
     };
 
-    await redis.set(`chat:session:${session}`, sessionData, { ex: 1800 });
+    // 2️⃣ ALWAYS stringify for Upstash
+    await redis.set(
+      `chat:session:${session}`,
+      JSON.stringify(sessionData),
+      { ex: 1800 }
+    );
 
-    // idempotent user record
-    await redis.set(userId, {
+    await redis.set(
       userId,
-      email: normalizedEmail,
-      lastActive: Date.now(),
-    });
+      JSON.stringify({
+        userId,
+        email: normalizedEmail,
+        lastActive: Date.now()
+      })
+    );
 
     console.log("✅ Session created:", session);
-    res.json({
-      status: "SESSION_STARTED",
-      ...sessionData,
-    });
 
-    res.json(sessionData);
+    return res.json(sessionData);
+
   } catch (err) {
-    console.error("❌ chat-checkout failed", err);
-    res.status(500).json({ error: "Failed to start session" });
+    console.error("❌ chat-checkout failed:", err);
+    return res.status(500).json({
+      error: "Failed to start session"
+    });
   }
 });
+
 
 /* ============================
    SHOP (PRODUCT SEARCH)
