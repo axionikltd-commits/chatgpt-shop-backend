@@ -1,174 +1,284 @@
+// ===============================
+// Axionik AI – ChatGPT Shop Backend
+// ===============================
+
 import express from "express";
 import cors from "cors";
-import { Redis } from "@upstash/redis";
-import { randomUUID } from "crypto";
+import dotenv from "dotenv";
 import path from "path";
 import { fileURLToPath } from "url";
+import { createClient } from "@upstash/redis";
+import { randomUUID } from "crypto";
 
+dotenv.config();
+
+// --------------------------------------------------
+// App setup
+// --------------------------------------------------
 const app = express();
 app.use(cors());
 app.use(express.json());
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
-/* ================================
-   REDIS SETUP
-================================ */
+
+// --------------------------------------------------
+// Redis setup (Upstash)
+// --------------------------------------------------
 console.log("🔌 Connecting to Redis...");
-
-const redis = new Redis({
+const redis = createClient({
   url: process.env.UPSTASH_REDIS_REST_URL,
-  token: process.env.UPSTASH_REDIS_REST_TOKEN,
+  token: process.env.UPSTASH_REDIS_REST_TOKEN
 });
-
 console.log("✅ Redis client created");
 
-/* ================================
-   HEALTH CHECK
-================================ */
+// --------------------------------------------------
+// HEALTH CHECK
+// --------------------------------------------------
 app.get("/health", (req, res) => {
   console.log("💓 Health check hit");
   res.json({ status: "ok" });
 });
 
-// Serve OpenAPI spec for ChatGPT Actions
+// --------------------------------------------------
+// SERVE OPENAPI SPEC FOR CHATGPT ACTIONS
+// --------------------------------------------------
 app.get("/openapi.yaml", (req, res) => {
   console.log("📄 OpenAPI spec requested");
   res.sendFile(path.join(__dirname, "openapi.yaml"));
 });
 
-/* ================================
-   CHAT START (Session Creation)
-================================ */
+// --------------------------------------------------
+// CHAT START (SESSION CREATION)
+// --------------------------------------------------
 app.post("/chat-start", async (req, res) => {
   console.log("🚀 /chat-start called");
   console.log("📥 Body:", req.body);
 
-  const { intent, color, size, budget } = req.body;
+  try {
+    const { intent, color, size, budget } = req.body;
 
-  const sessionId = randomUUID();
+    const sessionId = randomUUID();
 
-  const payload = {
-    session: sessionId,
-    filters: {
-      intent: intent?.toLowerCase(),
-      color: color?.toLowerCase(),
-      size: size?.toUpperCase(),
-      budget: Number(budget),
-      createdAt: Date.now(),
-    },
-    count: 0,
-    products: [],
-  };
+    const payload = {
+      session: sessionId,
+      filters: {
+        intent: intent?.toLowerCase(),
+        color: color?.toLowerCase(),
+        size,
+        budget: Number(budget),
+        createdAt: Date.now()
+      },
+      count: 0,
+      products: []
+    };
 
-  console.log("🧠 Session payload:", payload);
+    console.log("🧠 Creating session:", payload);
 
-  await redis.set(`chat:session:${sessionId}`, payload, { ex: 1800 });
+    await redis.set(`chat:session:${sessionId}`, JSON.stringify(payload), {
+      ex: 1800 // 30 minutes
+    });
 
-  console.log("💾 Session stored:", `chat:session:${sessionId}`);
+    console.log("✅ Session stored:", sessionId);
 
-  res.json(payload);
+    res.json(payload);
+  } catch (err) {
+    console.error("❌ /chat-start error:", err);
+    res.status(500).json({ error: "Failed to start session" });
+  }
 });
 
-/* ================================
-   SHOP (PRODUCT MATCHING)
-================================ */
+// --------------------------------------------------
+// START SHOPPING SESSION (CHATGPT ACTION)
+// --------------------------------------------------
+app.get("/chat-checkout", async (req, res) => {
+  console.log("🛍️ /chat-checkout called");
+  console.log("🔎 Query:", req.query);
+
+  try {
+    const sessionId = randomUUID();
+
+    const payload = {
+      session: sessionId,
+      filters: {
+        intent: req.query.intent?.toLowerCase(),
+        color: req.query.color?.toLowerCase(),
+        size: req.query.size,
+        budget: Number(req.query.budget),
+        createdAt: Date.now()
+      },
+      count: 0,
+      products: []
+    };
+
+    console.log("🧠 Creating chat session:", payload);
+
+    await redis.set(`chat:session:${sessionId}`, JSON.stringify(payload), {
+      ex: 1800
+    });
+
+    console.log("✅ Chat session created:", sessionId);
+
+    // IMPORTANT: JSON ONLY (NO REDIRECT)
+    res.json({
+      session: sessionId,
+      next: "/shop"
+    });
+  } catch (err) {
+    console.error("❌ /chat-checkout error:", err);
+    res.status(500).json({ error: "Failed to create chat session" });
+  }
+});
+
+// --------------------------------------------------
+// FETCH PRODUCTS FOR SESSION
+// --------------------------------------------------
 app.get("/shop", async (req, res) => {
-  const { session } = req.query;
-  console.log("🛒 /shop called with session:", session);
+  console.log("🛒 /shop called");
+  console.log("🔎 Query:", req.query);
 
-  const sessionKey = `chat:session:${session}`;
-  const sessionData = await redis.get(sessionKey);
+  try {
+    const { session } = req.query;
 
-  console.log("📦 Session fetched:", sessionData);
-
-  if (!sessionData) {
-    console.log("❌ Session not found");
-    return res.status(404).json({ error: "Session not found" });
-  }
-
-  const { color, size, budget, intent } = sessionData.filters;
-
-  console.log("🔍 Filters:");
-  console.log({ color, size, budget, intent });
-
-  const keys = await redis.keys("product:*");
-  console.log("📚 Product keys:", keys);
-
-  let matched = [];
-
-  for (const key of keys) {
-    const product = await redis.get(key);
-    console.log("➡ Checking product:", product.id);
-
-    const productColor = product.color?.toLowerCase();
-    const productCategory = product.category?.toLowerCase();
-    const productPrice = Number(product.price);
-    const productSizes = product.sizes || [];
-
-    const intentMatch =
-      !intent || productCategory.includes("tshirt");
-
-    const colorMatch =
-      !color || productColor === color;
-
-    const sizeMatch =
-      !size || productSizes.includes(size);
-
-    const budgetMatch =
-      !budget || productPrice <= budget;
-
-    console.log("🔎 Match results:", {
-      intentMatch,
-      colorMatch,
-      sizeMatch,
-      budgetMatch,
-    });
-
-    if (intentMatch && colorMatch && sizeMatch && budgetMatch) {
-      console.log("✅ PRODUCT MATCHED:", product.id);
-      matched.push(product);
-    } else {
-      console.log("❌ Product rejected:", product.id);
+    if (!session) {
+      console.error("❌ Missing session parameter");
+      return res.status(400).json({
+        session: null,
+        count: 0,
+        products: []
+      });
     }
-  }
 
-  sessionData.products = matched;
-  sessionData.count = matched.length;
+    const rawSession = await redis.get(`chat:session:${session}`);
+    console.log("📦 Raw session:", rawSession);
 
-  await redis.set(sessionKey, sessionData, { ex: 1800 });
+    if (!rawSession) {
+      console.warn("⚠️ Session not found:", session);
+      return res.json({
+        session,
+        count: 0,
+        products: []
+      });
+    }
 
-  console.log("📤 Final matched products:", matched.length);
+    const sessionData = JSON.parse(rawSession);
+    const filters = sessionData.filters;
 
-  res.json(sessionData);
-});
+    console.log("🎯 Filters:", filters);
 
-/* ================================
-   CHAT TRACK ORDER
-================================ */
-app.get("/chat-track-order", async (req, res) => {
-  const { orderId } = req.query;
-  console.log("📦 Track order:", orderId);
+    // --------------------------------------------------
+    // Load products from Redis
+    // --------------------------------------------------
+    const productKeys = await redis.keys("product:*");
+    console.log("📦 Product keys:", productKeys);
 
-  const order = await redis.get(`order:${orderId}`);
+    const products = [];
 
-  if (!order) {
-    return res.json({
-      message: "I couldn’t find your order.",
+    for (const key of productKeys) {
+      const product = await redis.get(key);
+      if (!product) continue;
+
+      const p = JSON.parse(product);
+
+      // Normalize
+      const price = Number(p.price);
+      const color = p.color?.toLowerCase();
+
+      // Filter logic
+      if (filters.color && color !== filters.color) continue;
+      if (filters.size && !p.sizes?.includes(filters.size)) continue;
+      if (filters.budget && price > filters.budget) continue;
+
+      products.push(p);
+    }
+
+    console.log(`✅ Matched products: ${products.length}`);
+
+    // Update session cache
+    sessionData.count = products.length;
+    sessionData.products = products;
+
+    await redis.set(`chat:session:${session}`, JSON.stringify(sessionData), {
+      ex: 1800
+    });
+
+    res.json({
+      session,
+      count: products.length,
+      products
+    });
+  } catch (err) {
+    console.error("❌ /shop error:", err);
+    res.status(500).json({
+      session: req.query.session,
+      count: 0,
+      products: []
     });
   }
-
-  res.json({
-    message: `Your order is currently ${order.deliveryStatus}`,
-    order,
-  });
 });
 
-/* ================================
-   SERVER START
-================================ */
+// --------------------------------------------------
+// ADD TO CART
+// --------------------------------------------------
+app.post("/add-to-cart", async (req, res) => {
+  console.log("➕ /add-to-cart called");
+  console.log("📥 Body:", req.body);
+
+  try {
+    const { session, productId, qty } = req.body;
+
+    const cartKey = `cart:${session}`;
+    const cart = (await redis.get(cartKey)) || [];
+
+    cart.push({ productId, qty });
+
+    await redis.set(cartKey, cart, { ex: 1800 });
+
+    console.log("✅ Cart updated:", cart);
+
+    res.json({ success: true });
+  } catch (err) {
+    console.error("❌ add-to-cart error:", err);
+    res.status(500).json({ error: "Add to cart failed" });
+  }
+});
+
+// --------------------------------------------------
+// TRACK ORDER (CHATGPT ACTION)
+// --------------------------------------------------
+app.get("/chat-track-order", async (req, res) => {
+  console.log("📦 /chat-track-order called");
+  console.log("🔎 Query:", req.query);
+
+  try {
+    const { orderId } = req.query;
+    const order = await redis.get(`order:${orderId}`);
+
+    if (!order) {
+      return res.json({
+        message: "I couldn't find your order."
+      });
+    }
+
+    const parsed = JSON.parse(order);
+
+    res.json({
+      message: `Your order is currently ${parsed.deliveryStatus}.`
+    });
+  } catch (err) {
+    console.error("❌ track-order error:", err);
+    res.status(500).json({
+      message: "Unable to track order right now."
+    });
+  }
+});
+
+// --------------------------------------------------
+// START SERVER
+// --------------------------------------------------
 const PORT = process.env.PORT || 10000;
 
 app.listen(PORT, () => {
-  console.log("🚀 Server running on port", PORT);
+  console.log("🚀 Server booting...");
+  console.log(`✅ Server running on port ${PORT}`);
 });
