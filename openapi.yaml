@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: Axionik AI Shopping API
-  version: "1.0"
+  version: "1.0.0"
 
 servers:
   - url: https://www.axionikai.com
@@ -10,7 +10,7 @@ paths:
   /chat-checkout:
     get:
       operationId: startShoppingSession
-      summary: Start shopping or request email
+      summary: Start shopping session or request email
       parameters:
         - name: email
           in: query
@@ -34,11 +34,23 @@ paths:
             type: number
       responses:
         "200":
-          description: Session created or email requested
+          description: Session initialized or email requested
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                  message:
+                    type: string
+                  session:
+                    type: string
 
   /shop:
     get:
       operationId: getProducts
+      summary: Fetch products for a session
       parameters:
         - name: session
           in: query
@@ -47,37 +59,85 @@ paths:
             type: string
       responses:
         "200":
-          description: Products list
+          description: Product list
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  session:
+                    type: string
+                  count:
+                    type: integer
+                  products:
+                    type: array
+                    items:
+                      type: object
 
   /add-to-cart:
     post:
       operationId: addToCart
+      summary: Add product to cart
       requestBody:
         required: true
         content:
           application/json:
             schema:
               type: object
+              properties:
+                session:
+                  type: string
+                productId:
+                  type: string
+                qty:
+                  type: integer
+              required:
+                - session
+                - productId
+                - qty
       responses:
         "200":
-          description: Added
+          description: Item added to cart
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
 
   /checkout/razorpay:
     post:
       operationId: createRazorpayCheckout
+      summary: Create order after payment
       requestBody:
         required: true
         content:
           application/json:
             schema:
               type: object
+              properties:
+                session:
+                  type: string
+              required:
+                - session
       responses:
         "200":
           description: Order created
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  orderId:
+                    type: string
 
   /chat-track-order:
     get:
       operationId: trackOrder
+      summary: Track order status
       parameters:
         - name: orderId
           in: query
@@ -87,3 +147,14 @@ paths:
       responses:
         "200":
           description: Order status
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  orderId:
+                    type: string
+                  deliveryStatus:
+                    type: string
+                  email:
+                    type: string
