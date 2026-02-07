@@ -43,13 +43,13 @@ app.get("/openapi.yaml", (req, res) => {
 ============================ */
 app.post("/chat-checkout", async (req, res) => {
   console.log("🚀 /chat-checkout");
-  console.log("➡️ Query:", req.query);
+  console.log("➡️ Body:", req.body);
 
   try {
-    const { intent, color, size, budget, email } = req.query;
+    const { intent, color, size, budget, email } = req.body;
 
     if (!email) {
-      return res.status(200).json({
+      return res.json({
         status: "EMAIL_REQUIRED",
         message: "Please provide your email address to start shopping."
       });
@@ -84,6 +84,10 @@ app.post("/chat-checkout", async (req, res) => {
     });
 
     console.log("✅ Session created:", session);
+    res.json({
+      status: "SESSION_STARTED",
+      ...sessionData,
+    });
 
     res.json(sessionData);
   } catch (err) {
