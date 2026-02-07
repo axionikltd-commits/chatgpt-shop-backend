@@ -10,9 +10,11 @@ const __dirname = path.dirname(__filename);
 const app = express();
 app.use(express.json());
 
-/* =========================
+/* ============================
    REDIS (NO .env)
-========================= */
+============================ */
+console.log("🔌 Connecting to Redis...");
+
 const redis = new Redis({
   url: "https://relieved-hedgehog-56308.upstash.io",
   token: "Adv0AAIncDExMDM0M2JlYzVhYTY0NjIyYTcwYjYxZDU5ZWY4OGYyM3AxNTYzMDg",
@@ -20,36 +22,39 @@ const redis = new Redis({
 
 console.log("✅ Redis connected");
 
-/* =========================
+/* ============================
    HELPERS
-========================= */
-const hashUserId = (email) =>
-  crypto.createHash("sha256").update(email).digest("hex");
+============================ */
+function userIdFromEmail(email) {
+  return crypto
+    .createHash("sha256")
+    .update(email.toLowerCase())
+    .digest("hex");
+}
 
-/* =========================
+/* ============================
    HEALTH
-========================= */
-app.get("/health", (_, res) => {
+============================ */
+app.get("/health", (req, res) => {
   res.json({ status: "ok" });
 });
 
-/* =========================
+/* ============================
    OPENAPI
-========================= */
-app.get("/openapi.yaml", (_, res) => {
+============================ */
+app.get("/openapi.yaml", (req, res) => {
   res.sendFile(path.join(__dirname, "openapi.yaml"));
 });
 
-/* =========================
-   CHAT CHECKOUT (GET ONLY)
-========================= */
+/* ============================
+   CHAT CHECKOUT (GET)
+============================ */
 app.get("/chat-checkout", async (req, res) => {
   console.log("🔥 /chat-checkout HIT", req.query);
 
   try {
     const { intent, color, size, budget, email } = req.query;
 
-    // ✅ EMAIL GATE (NO ERROR)
     if (!email) {
       return res.json({
         status: "EMAIL_REQUIRED",
@@ -58,7 +63,7 @@ app.get("/chat-checkout", async (req, res) => {
     }
 
     const normalizedEmail = email.toLowerCase();
-    const userId = hashUserId(normalizedEmail);
+    const userId = userIdFromEmail(normalizedEmail);
     const session = crypto.randomUUID();
 
     const sessionData = {
@@ -78,63 +83,67 @@ app.get("/chat-checkout", async (req, res) => {
 
     await redis.set(`chat:session:${session}`, sessionData, { ex: 1800 });
 
-    await redis.set(
-      `user:${userId}`,
-      { userId, email: normalizedEmail, lastActive: Date.now() },
-      { ex: 86400 }
-    );
-
-    return res.json(sessionData);
-  } catch (err) {
-    console.error(err);
-    return res.json({
-      status: "RETRY",
-      message: "Temporary issue. Please retry.",
+    await redis.set(`user:${userId}`, {
+      userId,
+      email: normalizedEmail,
+      lastActive: Date.now(),
     });
+
+    res.json(sessionData);
+  } catch (err) {
+    console.error("❌ chat-checkout failed", err);
+    res.status(500).json({ error: "Failed to start session" });
   }
 });
 
-/* =========================
+/* ============================
    SHOP
-========================= */
+============================ */
 app.get("/shop", async (req, res) => {
   const { session } = req.query;
-  if (!session) return res.json({ products: [] });
+  if (!session) return res.status(400).json({ error: "session required" });
 
-  const data = await redis.get(`chat:session:${session}`);
-  if (!data) return res.json({ products: [] });
+  const sessionKey = `chat:session:${session}`;
+  const sessionData = await redis.get(sessionKey);
+  if (!sessionData) return res.status(404).json({ error: "Session not found" });
+
+  const { color, size, budget } = sessionData.filters;
 
   const keys = await redis.keys("product:*");
   const products = [];
 
-  for (const k of keys) {
-    const p = await redis.get(k);
+  for (const key of keys) {
+    const p = await redis.get(key);
     if (!p) continue;
 
-    if (
-      (!data.filters.color || p.color === data.filters.color) &&
-      (!data.filters.size || p.sizes?.includes(data.filters.size)) &&
-      (!data.filters.budget || p.price <= data.filters.budget)
-    ) {
-      products.push(p);
-    }
+    const match =
+      (!color || p.color?.toLowerCase() === color.toLowerCase()) &&
+      (!size || p.sizes?.includes(size)) &&
+      (!budget || p.price <= budget);
+
+    if (match) products.push(p);
   }
 
-  data.products = products;
-  data.count = products.length;
-  await redis.set(`chat:session:${session}`, data, { ex: 1800 });
+  sessionData.products = products;
+  sessionData.count = products.length;
 
-  res.json({ session, products, count: products.length });
+  await redis.set(sessionKey, sessionData, { ex: 1800 });
+
+  res.json({
+    session,
+    count: products.length,
+    products,
+  });
 });
 
-/* =========================
+/* ============================
    ADD TO CART
-========================= */
+============================ */
 app.post("/add-to-cart", async (req, res) => {
   const { session, productId, qty } = req.body;
 
   const sessionData = await redis.get(`chat:session:${session}`);
-  if (!sessionData) return res.json({ success: false });
+  if (!sessionData) return res.status(404).json({ error: "Session not found" });
 
   const cartKey = `cart:${session}`;
   const cart = (await redis.get(cartKey)) || {
@@ -143,26 +152,29 @@ app.post("/add-to-cart", async (req, res) => {
     items: [],
   };
 
-  cart.items.push({ productId, qty, at: Date.now() });
+  cart.items.push({ productId, qty, addedAt: Date.now() });
   await redis.set(cartKey, cart, { ex: 1800 });
 
   res.json({ success: true });
 });
 
-/* =========================
+/* ============================
    CHECKOUT
-========================= */
+============================ */
 app.post("/checkout/razorpay", async (req, res) => {
   const { session } = req.body;
 
-  const cart = await redis.get(`cart:${session}`);
   const sessionData = await redis.get(`chat:session:${session}`);
+  if (!sessionData) return res.status(404).json({ error: "Session not found" });
 
-  if (!cart || !sessionData) return res.json({ success: false });
+  const cart = await redis.get(`cart:${session}`);
+  if (!cart || cart.items.length === 0) {
+    return res.status(400).json({ error: "Cart is empty" });
+  }
 
   const orderId = `ORD-${Date.now()}`;
 
-  await redis.set(`order:${orderId}`, {
+  const order = {
     orderId,
     userId: sessionData.userId,
     email: sessionData.email,
@@ -170,33 +182,37 @@ app.post("/checkout/razorpay", async (req, res) => {
     paymentStatus: "PAID",
     deliveryStatus: "PROCESSING",
     createdAt: Date.now(),
-  });
+  };
 
-  res.json({ success: true, orderId });
-});
-
-/* =========================
-   TRACK ORDER
-========================= */
-app.get("/chat-track-order", async (req, res) => {
-  const { orderId } = req.query;
-  const order = await redis.get(`order:${orderId}`);
-
-  if (!order) {
-    return res.json({ message: "Order not found." });
-  }
+  await redis.set(`order:${orderId}`, order);
 
   res.json({
+    success: true,
     orderId,
-    deliveryStatus: order.deliveryStatus,
-    email: order.email,
+    email: sessionData.email,
   });
 });
 
-/* =========================
-   SERVER
-========================= */
-const PORT = process.env.PORT || 10000;
-app.listen(PORT, () => {
-  console.log(`🚀 Server running on ${PORT}`);
+/* ============================
+   TRACK ORDER
+============================ */
+app.get("/chat-track-order", async (req, res) => {
+  const { orderId } = req.query;
+  if (!orderId) return res.json({ message: "Order ID required" });
+
+  const order = await redis.get(`order:${orderId}`);
+  if (!order) return res.json({ message: "Order not found" });
+
+  res.json({
+    deliveryStatus: order.deliveryStatus,
+    message: `Your order is ${order.deliveryStatus}`,
+  });
 });
+
+/* ============================
+   START
+============================ */
+const PORT = process.env.PORT || 10000;
+app.listen(PORT, () =>
+  console.log(`🚀 Server running on port ${PORT}`)
+);
