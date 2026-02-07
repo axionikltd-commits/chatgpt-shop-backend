@@ -1,67 +1,77 @@
-openapi: 3.1.1
+openapi: 3.1.0
 
 info:
   title: Axionik AI Shopping API
-  version: "1.0.0"
   description: |
     Conversational shopping backend for Axionik AI.
-    Used by ChatGPT Actions to browse products, manage cart,
-    checkout, and track order delivery status.
+    Designed for ChatGPT Actions with conversational-safe responses.
+  version: "1.0.0"
 
 servers:
   - url: https://www.axionikai.com
-    description: Production server
+    description: Production
 
 paths:
-
-  /health:
-    get:
-      operationId: healthCheck
-      summary: Health check
+  /chat-checkout:
+    post:
+      operationId: startShoppingSession
+      summary: Start or continue a shopping session
+      description: |
+        Starts a shopping session.
+        If email is missing, returns EMAIL_REQUIRED instead of an error.
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                email:
+                  type: string
+                  format: email
+                intent:
+                  type: string
+                  example: black t-shirt
+                color:
+                  type: string
+                  example: black
+                size:
+                  type: string
+                  example: M
+                budget:
+                  type: number
+                  example: 3000
       responses:
         "200":
-          description: Server is healthy
-
-  /chat-checkout:
-    get:
-      operationId: startShoppingSession
-      summary: Start shopping session from chat
-      description: |
-        Initializes a shopping session based on chat intent.
-        Returns a redirect URL with session ID.
-      parameters:
-        - name: intent
-          in: query
-          required: true
-          schema:
-            type: string
-          example: black t-shirt
-        - name: color
-          in: query
-          required: false
-          schema:
-            type: string
-          example: black
-        - name: size
-          in: query
-          required: false
-          schema:
-            type: string
-          example: M
-        - name: budget
-          in: query
-          required: false
-          schema:
-            type: number
-          example: 5000
-      responses:
-        "302":
-          description: Redirects to shop page with session ID
+          description: Session status
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - type: object
+                    properties:
+                      status:
+                        type: string
+                        enum: [EMAIL_REQUIRED]
+                      message:
+                        type: string
+                        example: Please provide your email address to start shopping.
+                  - type: object
+                    properties:
+                      status:
+                        type: string
+                        enum: [SESSION_STARTED]
+                      session:
+                        type: string
+                        example: sess_abc123
+                      message:
+                        type: string
+                        example: Your shopping session has started.
 
   /shop:
     get:
       operationId: getProducts
-      summary: Fetch products for a shopping session
+      summary: Fetch products for a session
       parameters:
         - name: session
           in: query
@@ -95,10 +105,7 @@ paths:
           application/json:
             schema:
               type: object
-              required:
-                - session
-                - productId
-                - qty
+              required: [session, productId, qty]
               properties:
                 session:
                   type: string
@@ -109,7 +116,7 @@ paths:
                   minimum: 1
       responses:
         "200":
-          description: Product added to cart
+          description: Added to cart
           content:
             application/json:
               schema:
@@ -128,14 +135,13 @@ paths:
           application/json:
             schema:
               type: object
-              required:
-                - session
+              required: [session]
               properties:
                 session:
                   type: string
       responses:
         "200":
-          description: Razorpay payment URL
+          description: Razorpay payment link
           content:
             application/json:
               schema:
@@ -147,7 +153,7 @@ paths:
   /chat-track-order:
     get:
       operationId: trackOrder
-      summary: Track order delivery status
+      summary: Track order status
       parameters:
         - name: orderId
           in: query
@@ -156,61 +162,18 @@ paths:
             type: string
       responses:
         "200":
-          description: Order delivery status
+          description: Order status
           content:
             application/json:
               schema:
                 type: object
                 properties:
-                  message:
-                    type: string
-                    example: Your order is currently SHIPPED
-                  deliveryStatus:
-                    type: string
-                    enum:
-                      - PROCESSING
-                      - SHIPPED
-                      - DELIVERED
-
-  /admin/update-order-status:
-    post:
-      operationId: updateOrderStatus
-      summary: Update order delivery status (Admin only)
-      description: |
-        Admin or automation endpoint to update order lifecycle.
-        Not intended for ChatGPT auto-invocation.
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              type: object
-              required:
-                - orderId
-                - status
-              properties:
-                orderId:
-                  type: string
-                  example: ORD-1707303123123
-                status:
-                  type: string
-                  enum:
-                    - PROCESSING
-                    - SHIPPED
-                    - DELIVERED
-      responses:
-        "200":
-          description: Order updated
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  success:
-                    type: boolean
                   orderId:
                     type: string
                   deliveryStatus:
+                    type: string
+                    enum: [PROCESSING, SHIPPED, DELIVERED]
+                  message:
                     type: string
 
 components:

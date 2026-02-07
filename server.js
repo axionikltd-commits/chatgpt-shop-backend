@@ -49,7 +49,10 @@ app.post("/chat-checkout", async (req, res) => {
     const { intent, color, size, budget, email } = req.query;
 
     if (!email) {
-      return res.status(400).json({ error: "email is required" });
+      return res.status(200).json({
+        status: "EMAIL_REQUIRED",
+        message: "Please provide your email address to start shopping."
+      });
     }
 
     const normalizedEmail = email.toLowerCase();
