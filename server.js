@@ -16,8 +16,8 @@ app.use(express.json());
 console.log("🔌 Connecting to Redis...");
 
 const redis = new Redis({
-  url: "https://YOUR_UPSTASH_URL",
-  token: "YOUR_UPSTASH_TOKEN",
+  url: "https://relieved-hedgehog-56308.upstash.io",
+  token: "Adv0AAIncDExMDM0M2JlYzVhYTY0NjIyYTcwYjYxZDU5ZWY4OGYyM3AxNTYzMDg",
 });
 
 console.log("✅ Redis connected");
