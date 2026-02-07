@@ -1,7 +1,7 @@
 openapi: 3.0.1
 info:
-  title: Axionik AI Shopping API
-  version: "1.0.0"
+  title: Axionik Chat Shop API
+  version: "1.0"
 
 servers:
   - url: https://www.axionikai.com
@@ -34,11 +34,20 @@ paths:
             type: number
       responses:
         "200":
-          description: Session started
+          description: Session created
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/Session"
+                type: object
+                properties:
+                  session:
+                    type: string
+                  email:
+                    type: string
+                  userId:
+                    type: string
+                  filters:
+                    type: object
 
   /shop:
     get:
@@ -51,20 +60,18 @@ paths:
             type: string
       responses:
         "200":
-          description: Products
+          description: Product list
           content:
             application/json:
               schema:
                 type: object
                 properties:
-                  session:
-                    type: string
                   count:
-                    type: integer
+                    type: number
                   products:
                     type: array
                     items:
-                      $ref: "#/components/schemas/Product"
+                      type: object
 
   /add-to-cart:
     post:
@@ -75,28 +82,26 @@ paths:
           application/json:
             schema:
               type: object
-              required: [session, productId, qty]
               properties:
                 session:
                   type: string
                 productId:
                   type: string
                 qty:
-                  type: integer
+                  type: number
       responses:
         "200":
-          description: Added
+          description: Added to cart
 
   /checkout/razorpay:
     post:
-      operationId: checkout
+      operationId: createRazorpayCheckout
       requestBody:
         required: true
         content:
           application/json:
             schema:
               type: object
-              required: [session]
               properties:
                 session:
                   type: string
@@ -116,44 +121,3 @@ paths:
       responses:
         "200":
           description: Order status
-
-components:
-  schemas:
-    Session:
-      type: object
-      properties:
-        session:
-          type: string
-        email:
-          type: string
-        userId:
-          type: string
-        count:
-          type: integer
-        products:
-          type: array
-          items:
-            $ref: "#/components/schemas/Product"
-
-    Product:
-      type: object
-      required: [id, name, price, image]
-      properties:
-        id:
-          type: string
-        name:
-          type: string
-        brand:
-          type: string
-        color:
-          type: string
-        sizes:
-          type: array
-          items:
-            type: string
-        price:
-          type: number
-        image:
-          type: string
-          format: uri
-          example: https://cdn.axionikai.com/products/P5001.jpg
