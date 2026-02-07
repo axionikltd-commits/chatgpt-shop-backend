@@ -172,9 +172,49 @@ app.post("/add-to-cart", async (req, res) => {
 ============================ */
 app.post("/checkout/razorpay", async (req, res) => {
   console.log("💳 /checkout/razorpay called");
-  res.json({
-    url: "https://razorpay.com/checkout/mock",
-  });
+  console.log("➡️ Body:", req.body);
+
+  try {
+    const { session } = req.body;
+
+    if (!session) {
+      return res.status(400).json({ error: "session required" });
+    }
+
+    // Fetch cart
+    const cartKey = `cart:${session}`;
+    const cart = await redis.get(cartKey);
+
+    if (!cart || cart.length === 0) {
+      return res.status(400).json({ error: "Cart is empty" });
+    }
+
+    // 🔥 CREATE ORDER
+    const orderId = `ORD-${Date.now()}`;
+
+    const order = {
+      orderId,
+      session,
+      items: cart,
+      paymentStatus: "PAID",
+      deliveryStatus: "PROCESSING",
+      createdAt: Date.now(),
+    };
+
+    // Store order
+    await redis.set(`order:${orderId}`, order);
+
+    console.log("📦 Order created:", order);
+
+    res.json({
+      success: true,
+      orderId,
+      message: "Payment successful, order created",
+    });
+  } catch (err) {
+    console.error("❌ Checkout failed:", err);
+    res.status(500).json({ error: "Checkout failed" });
+  }
 });
 
 /* ============================
