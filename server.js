@@ -2,11 +2,15 @@ import express from "express";
 import cors from "cors";
 import { Redis } from "@upstash/redis";
 import { randomUUID } from "crypto";
+import path from "path";
+import { fileURLToPath } from "url";
 
 const app = express();
 app.use(cors());
 app.use(express.json());
 
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 /* ================================
    REDIS SETUP
 ================================ */
@@ -25,6 +29,12 @@ console.log("✅ Redis client created");
 app.get("/health", (req, res) => {
   console.log("💓 Health check hit");
   res.json({ status: "ok" });
+});
+
+// Serve OpenAPI spec for ChatGPT Actions
+app.get("/openapi.yaml", (req, res) => {
+  console.log("📄 OpenAPI spec requested");
+  res.sendFile(path.join(__dirname, "openapi.yaml"));
 });
 
 /* ================================
