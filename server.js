@@ -41,7 +41,7 @@ app.get("/openapi.yaml", (req, res) => {
 /* ============================
    CHAT CHECKOUT (SESSION + USER)
 ============================ */
-app.get("/chat-checkout", async (req, res) => {
+app.post("/chat-checkout", async (req, res) => {
   console.log("🚀 /chat-checkout");
   console.log("➡️ Query:", req.query);
 
