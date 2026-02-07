@@ -13,8 +13,8 @@ servers:
 
 paths:
   /chat-checkout:
-    post:
-      operationId: startShoppingSession
+    get:
+      operationId: startShoppingSessions
       summary: Start or continue a shopping session
       description: |
         Starts a shopping session.
