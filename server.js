@@ -26,7 +26,7 @@ const __dirname = path.dirname(__filename);
 // Redis setup (Upstash)
 // --------------------------------------------------
 console.log("🔌 Connecting to Redis...");
-const redis = Redis({
+const redis = new Redis({
   url: process.env.UPSTASH_REDIS_REST_URL,
   token: process.env.UPSTASH_REDIS_REST_TOKEN
 });
