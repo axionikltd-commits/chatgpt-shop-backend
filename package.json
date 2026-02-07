@@ -14,8 +14,9 @@
   "dependencies": {
     "@upstash/redis": "^1.36.2",
     "cors": "^2.8.6",
-    "dotenv": "^17.2.3",
+    "dotenv": "^17.2.4",
     "express": "^5.2.1",
-    "razorpay": "^2.9.6"
+    "razorpay": "^2.9.6",
+    "uuid": "^13.0.0"
   }
 }
