@@ -43,10 +43,10 @@ app.get("/openapi.yaml", (req, res) => {
 ============================ */
 app.get("/chat-checkout", async (req, res) => {
   console.log("🚀 /chat-checkout");
-  console.log("➡️ Body:", req.body);
+  console.log("➡️ Body:", req.query);
 
   try {
-    const { intent, color, size, budget, email } = req.body;
+    const { intent, color, size, budget, email } = req.query;
 
     if (!email) {
       return res.json({
