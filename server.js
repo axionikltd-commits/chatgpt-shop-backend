@@ -241,6 +241,55 @@ app.get("/chat-track-order", async (req, res) => {
   });
 });
 
+app.post("/admin/update-order-status", async (req, res) => {
+  console.log("🚚 Update order status called");
+  console.log("➡️ Body:", req.body);
+
+  try {
+    const { orderId, status } = req.body;
+
+    if (!orderId || !status) {
+      return res.status(400).json({
+        error: "orderId and status are required",
+      });
+    }
+
+    const allowedStatuses = ["PROCESSING", "SHIPPED", "DELIVERED"];
+
+    if (!allowedStatuses.includes(status)) {
+      return res.status(400).json({
+        error: `Invalid status. Allowed: ${allowedStatuses.join(", ")}`,
+      });
+    }
+
+    const orderKey = `order:${orderId}`;
+    const order = await redis.get(orderKey);
+
+    if (!order) {
+      return res.status(404).json({
+        error: "Order not found",
+      });
+    }
+
+    order.deliveryStatus = status;
+    order.updatedAt = Date.now();
+
+    await redis.set(orderKey, order);
+
+    console.log("✅ Order status updated:", order);
+
+    res.json({
+      success: true,
+      orderId,
+      deliveryStatus: status,
+    });
+  } catch (err) {
+    console.error("❌ Failed to update order:", err);
+    res.status(500).json({ error: "Failed to update order status" });
+  }
+});
+
+
 /* ============================
    START SERVER
 ============================ */
